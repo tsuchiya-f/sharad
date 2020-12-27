@@ -5,21 +5,24 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-
+#include "tiffio.h"
+      
 #define CV (299792458.0)
 #define DR (0.0375e-6*CV/2)
 #define RM (3396000)
 
-#define NX (11520*4)
-#define NY ( 5632*4)
-#define DL (0.5) //3
-#define DEG (M_PI/180.0)
+#define NX (106694) //11520*4
+#define NY ( 53347) // 5632*4
 
+#define DL (3)
+#define DEG (M_PI/180.0)
 #define M (10)
 
 // **** Only "LAT = LAT_MIN - LAT-MAX" can pass. ****
-#define LAT_MAX (5.0)
-#define LAT_MIN (-35.0)
+#define LAT_MAX (45.0)
+#define LAT_MIN (15.0)
+#define LON_MAX (-20.0)
+#define LON_MIN (-60.0)
 
 // Vector normaliztion
 double norm(double *a,double *b) {
@@ -50,6 +53,38 @@ void cross_n(double *a,double *b,double *c) {
   cc=sqrt(dot(c,c));
   for (i=0;i<3;i++) c[i]/=cc;
 }
+
+//Tsuchiya function---------------------------------
+void read_HRSC_Blend(short *data, float *lat, float *lon, int nx, int ny){
+  FILE *fp;
+  int i,j,k;
+  int ix, iy;
+  float x,y,z;
+  fp=fopen("../HRSC-Blend/Mars_HRSC_MOLA_BlendDEM_Global_200mp_v2_gdal.csv","r");
+  
+  // grid number of LON_MIN
+  ix = (int)((float)NX/360.0*(LON_MIN+180.0));
+  // grid number of LAT_MAX 
+  iy = (int)((float)NY/180.0*(90.0-LAT_MAX));
+
+  for (j=0; j<iy+ny;j++){
+    for (i=0; i<NX; i++){
+      // read data from the csv file
+      fscanf(fp, "%f %f %f", &x, &y, &z);
+      //printf("%f %f %f\n", x, y, z);
+      // store data if ix<=i<ix+nx & iy<=j<iy+ny 
+      if (i >= ix && i < ix+nx && j >= iy){
+	k = (i-ix) + (j-iy)*nx;
+	data[k] = (short)z;
+	lon[k] = x;
+	lat[k] = y;
+	//printf("%d",k);
+      }
+    }
+  }
+  fclose(fp);
+}
+//-----------------------------------------------------
 
 int main(int argc,char **argv) {
   static float dat[3604];
@@ -92,7 +127,7 @@ int main(int argc,char **argv) {
   double la;
   double lo0;
   double la0;
-  int i;
+  int i,j,k;
   int ns;
   int ne;
   FILE *fp1;
@@ -108,13 +143,36 @@ int main(int argc,char **argv) {
   double rr;
   int ii;
   
+  float *lat, *lon;
+  int nx, ny;
+
   sscanf(argv[1],"%d",&ns);
   sscanf(argv[2],"%d",&ne);
-  
-  datr=(short *)malloc(sizeof(short)*NX*NY);
-  fp=fopen("./MOLA/megr.bin","r");
-  fread(datr,sizeof(short),NX*NY,fp);
-  fclose(fp);
+
+  //Tsuchiya function-----------------------------------------------
+    // number of grid for longitude (from LON_MIN to LON_MAX)  
+    nx = (int)((float)NX/360.0*(LON_MAX-LON_MIN));
+    // number of grid for latitude (from LAT_MAX to LAT_MIN)
+    ny = (int)((float)NY/180.0*(LAT_MAX-LAT_MIN));
+
+    datr=(short *)malloc(sizeof(short)*nx*ny);
+    lat = (float *)malloc(sizeof(float)*nx*ny);
+    lon = (float *)malloc(sizeof(float)*nx*ny);
+    read_HRSC_Blend(datr, lat, lon, nx, ny);
+    //printf("%d\n",datr[0]);
+
+    //output data
+    fp = fopen("output_HRSC.dat", "w");
+    for (j=0;j<ny;j++){
+      for (i=0;i<nx;i++){
+	k=i+j*nx;
+	fprintf(fp,"%d %d %f %f %d\n", i,j,lon[k],lat[k],datr[k]);
+      }
+      fprintf(fp,"\n");
+    }
+    fclose(fp);
+
+  //----------------------------------------------------------------
 
   //fp=fopen(argv[1],"r");
   fread(dat2,sizeof(char),24,stdin);
@@ -140,7 +198,7 @@ int main(int argc,char **argv) {
     ix0=floor((dat[3601]-DL)*128);
     ix1=floor((dat[3601]+DL)*128);
     iy0=floor((88-dat[3600]-DL)*128);if (iy0<1) iy0=1;
-    iy1=floor((88-dat[3600]+DL)*128);if (iy1>NY-2) iy1=NY-2;
+    iy1=floor((88-dat[3600]+DL)*128);if (iy1>ny-2) iy1=ny-2; //NY NY
 
     rr_sc=dat[3603]*1e3;   // R of S/C
     rr_ar=dat[3602]*1e3;   // R of Areoid
@@ -156,24 +214,25 @@ int main(int argc,char **argv) {
     fwrite(e_sc  ,sizeof(double),3,fp);
     fwrite(&rr_sc,sizeof(double),1,fp);
     fwrite(&rr_ar,sizeof(double),1,fp);
-    
+
     //fprintf(stderr,"%d %d %d %d\n",ix0,ix1,iy0,iy1);
     for (ix=ix0;ix<ix1;ix++) {
       if ((ix%100)==0) fprintf(stderr,"%d %d %d\n",ix0,ix,ix1);
       for (iy=iy0;iy<iy1;iy++) {
 	//fprintf(stderr,"%d %d %d %d %d %d\n",ix0,ix,ix1,iy0,iy,iy1);
 	jx=ix;
-	while (jx<0)   jx+=NX;
-	while (jx>=NX) jx-=NX;
+	while (jx<0)   jx+=ny; //NY
+	while (jx>=nx) jx-=nx; //NX
 	//jx0=ix-1;
 	//while (jx0<0)   jx0+=NX;
 	//while (jx0>=NX) jx0-=NX;
 	jx1=ix+1;
-	while (jx1<0)   jx1+=NX;
-	while (jx1>=NX) jx1-=NX;
+	while (jx1<0)   jx1+=nx; //NX
+	while (jx1>=nx) jx1-=nx; //NX
 
-	p1=datr[jx*NY+iy  ];p2=datr[jx1*NY+iy  ];
-	p3=datr[jx*NY+iy+1];p4=datr[jx1*NY+iy+1];
+	p1=datr[jx*ny+iy  ];p2=datr[jx1*ny+iy  ]; //NY NY
+	p3=datr[jx*ny+iy+1];p4=datr[jx1*ny+iy+1]; //NY NY
+	printf("%lf %lf %lf %lf\n", p1,p2,p3,p4);
 	for (kx=0;kx<=M;kx++) {
 	  p5=p1+(p2-p1)*kx/(double)M;
 	  p6=p3+(p4-p3)*kx/(double)M;
