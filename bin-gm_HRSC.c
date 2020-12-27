@@ -54,36 +54,6 @@ void cross_n(double *a,double *b,double *c) {
   for (i=0;i<3;i++) c[i]/=cc;
 }
 
-//Tsuchiya function---------------------------------
-void read_HRSC_Blend(short *data, float *lat, float *lon, int nx, int ny){
-  FILE *fp;
-  int i,j,k;
-  int ix, iy;
-  float x,y,z;
-  fp=fopen("../HRSC-Blend/Mars_HRSC_MOLA_BlendDEM_Global_200mp_v2_gdal.csv","r");
-  
-  // grid number of LON_MIN
-  ix = (int)((float)NX/360.0*(LON_MIN+180.0));
-  // grid number of LAT_MAX 
-  iy = (int)((float)NY/180.0*(90.0-LAT_MAX));
-
-  for (j=0; j<iy+ny;j++){
-    for (i=0; i<NX; i++){
-      // read data from the csv file
-      fscanf(fp, "%f %f %f", &x, &y, &z);
-      //printf("%f %f %f\n", x, y, z);
-      // store data if ix<=i<ix+nx & iy<=j<iy+ny 
-      if (i >= ix && i < ix+nx && j >= iy){
-	k = (i-ix) + (j-iy)*nx;
-	data[k] = (short)z;
-	lon[k] = x;
-	lat[k] = y;
-	//printf("%d",k);
-      }
-    }
-  }
-  fclose(fp);
-}
 //-----------------------------------------------------
 
 int main(int argc,char **argv) {
@@ -143,67 +113,67 @@ int main(int argc,char **argv) {
   double rr;
   int ii;
   
-  float *lat, *lon;
   int nx, ny;
+  double lon1, lon2, lat1, lat2;
+  double lon_nbin, lat_nbin;
+  float  f_val;
 
   sscanf(argv[1],"%d",&ns);
   sscanf(argv[2],"%d",&ne);
 
-  //Tsuchiya function-----------------------------------------------
-    // number of grid for longitude (from LON_MIN to LON_MAX)  
-    nx = (int)((float)NX/360.0*(LON_MAX-LON_MIN));
-    // number of grid for latitude (from LAT_MAX to LAT_MIN)
-    ny = (int)((float)NY/180.0*(LAT_MAX-LAT_MIN));
-
-    datr=(short *)malloc(sizeof(short)*nx*ny);
-    lat = (float *)malloc(sizeof(float)*nx*ny);
-    lon = (float *)malloc(sizeof(float)*nx*ny);
-    read_HRSC_Blend(datr, lat, lon, nx, ny);
-    //printf("%d\n",datr[0]);
-
-    //output data
-    fp = fopen("output_HRSC.dat", "w");
-    for (j=0;j<ny;j++){
-      for (i=0;i<nx;i++){
-	k=i+j*nx;
-	fprintf(fp,"%d %d %f %f %d\n", i,j,lon[k],lat[k],datr[k]);
-      }
-      fprintf(fp,"\n");
-    }
-    fclose(fp);
+  // read HRSC Blend data ------------------------------------------
+  fp=fopen("output_HRSC.bin","rb");
+  fread(&nx, sizeof(int), 1, fp);      // number of bin of longitude
+  fread(&ny, sizeof(int), 1, fp);      // number of bin of latitude
+  fread(&f_val, sizeof(float), 1, fp); lon2 = (double)f_val; // minimum longitude
+  fread(&f_val, sizeof(float), 1, fp); lon1 = (double)f_val; // maximum longitude
+  fread(&f_val, sizeof(float), 1, fp); lat1 = (double)f_val; // maximum latitude
+  fread(&f_val, sizeof(float), 1, fp); lat2 = (double)f_val; // minimum latitude
+  if (lon1 < 0.0) lon1 += 360.0;
+  if (lon2 < 0.0) lon2 += 360.0;
+  fprintf(stderr, " longitude: %d %lf %lf\n",nx,lon1,lon2);
+  fprintf(stderr, " latitude : %d %lf %lf\n",ny,lat1,lat2);
+  
+  datr = (short *)malloc(sizeof(short)*nx*ny);
+  fread(datr, sizeof(short)*nx*ny, 1, fp);
+  
+  //printf("%d\n",datr[0]);
+  fclose(fp);
 
   //----------------------------------------------------------------
 
-  //fp=fopen(argv[1],"r");
+  // read radergram data from stdin --------------------------------
+  // read radergram file name (*.img)
   fread(dat2,sizeof(char),24,stdin);
 
+  // read radergram data
   for (n=0;n<ns;n++) {
     fread(dat,sizeof(float),3604,stdin);if (feof(stdin)) exit(0);
   }
   for (n=ns;n<ne;n++) {
     fread(dat,sizeof(float),3604,stdin);if (feof(stdin)) break;
-    //fclose(fp);
+    rr_sc=dat[3603]*1e3;   // R of S/C
+    rr_ar=dat[3602]*1e3;   // R of Areoid
+    lo0=dat[3601];         // Longitude of S/C
+    la0=dat[3600];         // Latitude of S/C
 
-    // **** Only "LAT = LAT_MIN - LAT-MAX" can pass. [start] ****
-    if ( dat[3600] > LAT_MAX || dat[3600] < LAT_MIN ) 
-      {	fprintf(stderr,"# %s %lf %lf %lf %lf  ==> SKIP !!!\n",
+    // **** Only "LAT = LAT_MIN to LAT-MAXi & LON = LON_MIN to LON_MAX" can pass.  ****
+    if (la0 > lat1 || la0 < lat2 || lo0 > lon1 || lo0 < lon2){
+      fprintf(stderr,"# %s %lf %lf %lf %lf  ==> SKIP !!!\n",
 		dat2,dat[3600],dat[3601],dat[3602],dat[3603]);
-	continue;
-      }
-    // **** Only "LAT = LAT_MIN - LAT-MAX" can pass. [end] ****
+      continue;
+    }
   
     fprintf(stderr,"# %s %lf %lf %lf %lf\n",
 	    dat2,dat[3600],dat[3601],dat[3602],dat[3603]);
 
-    ix0=floor((dat[3601]-DL)*128);
-    ix1=floor((dat[3601]+DL)*128);
-    iy0=floor((88-dat[3600]-DL)*128);if (iy0<1) iy0=1;
-    iy1=floor((88-dat[3600]+DL)*128);if (iy1>ny-2) iy1=ny-2; //NY NY
+    lon_nbin = (float)nx/(lon1-lon2);   // number of grid (longitude, HRSC data)
+    ix0=floor((lo0 - lon2 - DL)*lon_nbin); if (ix0<1   ) ix0=1;
+    ix1=floor((lo0 - lon2 + DL)*lon_nbin); if (ix1>nx-2) ix1=nx-1;
+    lat_nbin = (float)ny/(lat1-lat2);   // nuber of grid (latitude, HRSC data)
+    iy0=floor((lat1 - la0 - DL)*lat_nbin); if (iy0<1   ) iy0=1;
+    iy1=floor((lat1 - la0 + DL)*lat_nbin); if (iy1>ny-2) iy1=ny-2; //NY NY
 
-    rr_sc=dat[3603]*1e3;   // R of S/C
-    rr_ar=dat[3602]*1e3;   // R of Areoid
-    lo0=dat[3601];  // Longitude of S/C
-    la0=dat[3600];  // Latitude of S/C
     e_sc[0]=cos(la0*DEG)*cos(lo0*DEG);
     e_sc[1]=cos(la0*DEG)*sin(lo0*DEG);
     e_sc[2]=sin(la0*DEG);
@@ -217,7 +187,7 @@ int main(int argc,char **argv) {
 
     //fprintf(stderr,"%d %d %d %d\n",ix0,ix1,iy0,iy1);
     for (ix=ix0;ix<ix1;ix++) {
-      if ((ix%100)==0) fprintf(stderr,"%d %d %d\n",ix0,ix,ix1);
+      if ((ix%100)==0) fprintf(stderr,"(ix0,ix,ix1) = (%d %d %d)\n",ix0,ix,ix1);
       for (iy=iy0;iy<iy1;iy++) {
 	//fprintf(stderr,"%d %d %d %d %d %d\n",ix0,ix,ix1,iy0,iy,iy1);
 	jx=ix;
@@ -232,7 +202,7 @@ int main(int argc,char **argv) {
 
 	p1=datr[jx*ny+iy  ];p2=datr[jx1*ny+iy  ]; //NY NY
 	p3=datr[jx*ny+iy+1];p4=datr[jx1*ny+iy+1]; //NY NY
-	printf("%lf %lf %lf %lf\n", p1,p2,p3,p4);
+	//printf("%lf %lf %lf %lf\n", p1,p2,p3,p4);
 	for (kx=0;kx<=M;kx++) {
 	  p5=p1+(p2-p1)*kx/(double)M;
 	  p6=p3+(p4-p3)*kx/(double)M;
@@ -278,8 +248,8 @@ int main(int argc,char **argv) {
 	for (kx=0;kx<M;kx++) {
 	  for (ky=0;ky<M;ky++) {
 	    rr_su=RM+datr1[kx][ky];
-	    lo=(ix+(kx+0.5)/(double)M)/128.0;
-	    la=88-(iy+(ky+0.5)/(double)M)/128.0;
+	    lo = lon2 + (ix+(kx+0.5)/(double)M) / lon_nbin;
+	    la = lat1 - (iy+(ky+0.5)/(double)M) / lat_nbin;
 	    e_su[0]=cos(la*DEG)*cos(lo*DEG);
 	    e_su[1]=cos(la*DEG)*sin(lo*DEG);
 	    e_su[2]=sin(la*DEG);
@@ -298,29 +268,29 @@ int main(int argc,char **argv) {
 	    if ((0<=ii)&&(ii<3600)) {
 	    
 	      vv=RM+datr0[kx][ky];
-	      lo=(ix+kx/(double)M)/128.0;
-	      la=88-(iy+ky/(double)M)/128.0;
+	      lo = lon2 + (ix+kx/(double)M) / lon_nbin;
+	      la = lat1 - (iy+ky/(double)M) / lat_nbin;
 	      r_su1[0]=vv*cos(la*DEG)*cos(lo*DEG);
 	      r_su1[1]=vv*cos(la*DEG)*sin(lo*DEG);
 	      r_su1[2]=vv*sin(la*DEG);
 	      
 	      vv=RM+datr0[kx][ky+1];
-	      lo=(ix+kx/(double)M)/128.0;
-	      la=88-(iy+(ky+1)/(double)M)/128.0;
+	      lo = lon2 + (ix+kx/(double)M)     / lon_nbin;
+	      la = lat1 - (iy+(ky+1)/(double)M) / lat_nbin;
 	      r_su2[0]=vv*cos(la*DEG)*cos(lo*DEG);
 	      r_su2[1]=vv*cos(la*DEG)*sin(lo*DEG);
 	      r_su2[2]=vv*sin(la*DEG);
 	      
 	      vv=RM+datr0[kx+1][ky+1];
-	      lo=(ix+(kx+1)/(double)M)/128.0;
-	      la=88-(iy+(ky+1)/(double)M)/128.0;
+	      lo = lon2 + (ix+(kx+1)/(double)M) / lon_nbin;
+	      la = lat1 - (iy+(ky+1)/(double)M) / lat_nbin;
 	      r_su3[0]=vv*cos(la*DEG)*cos(lo*DEG);
 	      r_su3[1]=vv*cos(la*DEG)*sin(lo*DEG);
 	      r_su3[2]=vv*sin(la*DEG);
 	      
 	      vv=RM+datr0[kx+1][ky];
-	      lo=(ix+(kx+1)/(double)M)/128.0;
-	      la=88-(iy+ky/(double)M)/128.0;
+	      lo = lon2 + (ix+(kx+1)/(double)M) / lon_nbin;
+	      la = lat1 - (iy+ky/(double)M)     / lat_nbin;
 	      r_su4[0]=vv*cos(la*DEG)*cos(lo*DEG);
 	      r_su4[1]=vv*cos(la*DEG)*sin(lo*DEG);
 	      r_su4[2]=vv*sin(la*DEG);
@@ -357,4 +327,3 @@ int main(int argc,char **argv) {
   }
   exit(0);
 }
-
